@@ -100,7 +100,7 @@ relies on this retry behavior.
 Pulled from the live services via `railway variables --json`, matching the reference's variable
 names and reference expressions exactly except where noted.
 
-### `postgres` — 10 total
+### `postgres` — 12 total
 | Variable | Value | Optional? | Description |
 |---|---|---|---|
 | `POSTGRES_USER` | `postgres` | No | Default Postgres superuser name. |
@@ -113,11 +113,11 @@ names and reference expressions exactly except where noted.
 | `PGHOST` | `${{RAILWAY_PRIVATE_DOMAIN}}` | No | Internal Postgres host address. |
 | `PGPORT` | `5432` | No | Postgres server listening port. |
 | `DATABASE_URL` | `postgresql://${{PGUSER}}:${{POSTGRES_PASSWORD}}@${{RAILWAY_PRIVATE_DOMAIN}}:5432/${{PGDATABASE}}` | No | Internal Postgres connection string — this is what all 3 Superset services reference for their metadata DB. |
+| `SSL_CERT_DAYS` | `820` | No | Self-signed SSL certificate validity, specific to the `postgres-ssl` image this template uses instead of raw `postgres:*`. |
+| `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | `60` | No | Graceful shutdown draining duration before the old instance is killed on redeploy. |
 
-**Also present in the reference (not set on this build — optional extras):**
-`DATABASE_PUBLIC_URL` (external connection string via TCP proxy, only needed for connecting from
-outside Railway), `SSL_CERT_DAYS` (self-signed cert validity, specific to the `postgres-ssl` image),
-`RAILWAY_DEPLOYMENT_DRAINING_SECONDS` (graceful shutdown timing).
+**Not set on this build, upstream-optional:** `DATABASE_PUBLIC_URL` (external connection string via
+TCP proxy — only needed for connecting to Postgres from outside Railway, e.g. a local SQL client).
 
 ### `redis` — 6 total
 | Variable | Value | Optional? | Description |
@@ -145,19 +145,30 @@ outside Railway), `SSL_CERT_DAYS` (self-signed cert validity, specific to the `p
 | `SUPERSET_PORT` | `8088` | No | Internal gunicorn port — also what the service's public domain should target. |
 | `SUPERSET_SECRET_KEY` | `${{secret(64)}}` | No | Flask session signing key. Auto-generate — do not reuse across deployments. |
 
-### `superset-worker`, `superset-beat` — 12 total each
-Identical variable set to `superset` (web), except every value is a **reference back to the web
-service** instead of an independent value, so all 3 processes share the same config, secret key,
-and admin credentials:
+### `superset-worker` — 12 total
+Same shape as `superset` (web), but every service-to-service value **references the web service**
+instead of holding its own independent value, so all 3 processes share one config, one secret key,
+and one set of admin credentials. Pulled directly from the live service, not inferred.
 
-| Variable | Value |
-|---|---|
-| `ADMIN_PASSWORD` | `${{superset.ADMIN_PASSWORD}}` |
-| `DATABASE_URL` | `${{postgres.DATABASE_URL}}` |
-| `REDIS_URL` | `${{redis.REDIS_URL}}` |
-| `SUPERSET_CONFIG_B64` | `${{superset.SUPERSET_CONFIG_B64}}` |
-| `SUPERSET_SECRET_KEY` | `${{superset.SUPERSET_SECRET_KEY}}` |
-| `DATABASE_DIALECT`, `DEV_MODE`, `PYTHONPATH`, `RAILWAY_RUN_UID`, `SUPERSET_ENV`, `SUPERSET_LOAD_EXAMPLES`, `SUPERSET_PORT` | Same literal values as `superset` (web) — `postgresql`, `false`, `/app/pythonpath`, `0`, `production`, `no`, `8088` |
+| Variable | Value | Optional? | Description |
+|---|---|---|---|
+| `ADMIN_PASSWORD` | `${{superset.ADMIN_PASSWORD}}` | No | Matches the web service's admin password — not independently generated. |
+| `DATABASE_DIALECT` | `postgresql` | No | Triggers the `psycopg2*` install path — see §3 for why worker/beat needed an *additional* explicit fix beyond what this variable alone triggers. |
+| `DATABASE_URL` | `${{postgres.DATABASE_URL}}` | No | Metadata DB connection string. |
+| `DEV_MODE` | `false` | No | Disables the dev-mode editable install. |
+| `PYTHONPATH` | `/app/pythonpath` | No | Where the decoded `superset_config.py` gets placed and picked up. |
+| `RAILWAY_RUN_UID` | `0` | No | Runs the container as root — required for the runtime `psycopg2-binary` install in the start command to have write access. |
+| `REDIS_URL` | `${{redis.REDIS_URL}}` | No | Celery broker + result backend + cache URL, referenced inside the decoded config. |
+| `SUPERSET_CONFIG_B64` | `${{superset.SUPERSET_CONFIG_B64}}` | No | Same base64-encoded config as web — referenced, not duplicated, so one edit to the web service propagates everywhere. |
+| `SUPERSET_ENV` | `production` | No | Production mode flag. |
+| `SUPERSET_LOAD_EXAMPLES` | `no` | No | Skip loading example dashboards on init (not used by worker itself, kept consistent with web/beat). |
+| `SUPERSET_PORT` | `8088` | No | Not used by the worker process — no HTTP server here — kept consistent with web/beat. |
+| `SUPERSET_SECRET_KEY` | `${{superset.SUPERSET_SECRET_KEY}}` | No | Matches the web service's Flask session key. |
+
+### `superset-beat` — 12 total
+Identical variable set and values to `superset-worker` above — same table, same references, same
+reasoning per variable. The only difference between the two services is their start command (§2),
+not their variables.
 
 ---
 
